@@ -1,8 +1,8 @@
 ---
 # Salt Security Cloud Connect — IBM Cloud deployment (Ansible variant)
 #
-# This playbook is a functional equivalent of ../terraform/ but with explicit
-# failure reporting to the Salt backend via a rescue block.
+# Functional equivalent of the root Terraform module with explicit
+# Initiated/Succeeded/Failed reporting to the Salt backend via block/rescue.
 #
 # Usage:
 #   export IC_API_KEY='your-ibm-cloud-api-key'
@@ -11,12 +11,10 @@
 #     -e salt_auth_token=<token> \
 #     [-e attempt_id=<uuid>]
 #
-# Required collections:
-#   ansible-galaxy collection install ibm.cloudcollection community.general
-#
-# Prerequisites:
-#   - IBM Cloud account (Pay-As-You-Go or higher — Lite tier cannot create Service IDs)
-#   - ibmcloud CLI or IC_API_KEY env var with IAM Administrator permissions
+# Structure: this file installs ibm.cloudcollection at runtime and then
+# dynamically includes ibm_tasks.yml. The ibm.cloudcollection module
+# references live in ibm_tasks.yml so Ansible doesn't try to resolve them
+# at playbook-parse time (before the install has run).
 
 - name: Salt Security Cloud Connect — IBM Cloud
   hosts: localhost
@@ -43,17 +41,10 @@
 
     ibm_region: "us-south"
 
-    # Runtime state
     ibm_account_id: ""
     ibm_api_key: ""
 
-  pre_tasks:
-    # Schematics Action runners don't auto-install from requirements.yml —
-    # install the IBM collection inline so the playbook is self-contained.
-    - name: Install required Ansible collections
-      command: ansible-galaxy collection install -r {{ playbook_dir }}/requirements.yml
-      changed_when: false
-
+  tasks:
     - name: Verify required variables are set
       assert:
         that:
@@ -67,173 +58,14 @@
           - lookup('env', 'IC_API_KEY') | length > 0
         fail_msg: "IC_API_KEY environment variable is required"
 
-  tasks:
-    # ------------------------------------------------------------------
-    # 1. Discover the current IBM Cloud account ID
-    # ------------------------------------------------------------------
-    - name: Get IBM IAM account settings
-      ibm.cloudcollection.ibm_iam_account_settings_info:
-        ibmcloud_api_key: "{{ lookup('env', 'IC_API_KEY') }}"
-        region: "{{ ibm_region }}"
-      register: account_info
+    # Schematics Action runners don't auto-install from requirements.yml;
+    # install the IBM collection at runtime so the playbook is self-contained.
+    - name: Install ibm.cloudcollection at runtime
+      command: ansible-galaxy collection install -r {{ playbook_dir }}/requirements.yml
+      changed_when: false
 
-    - name: Record account ID
-      set_fact:
-        ibm_account_id: "{{ account_info.resource.account_id }}"
-
-    # ------------------------------------------------------------------
-    # 2. Send "Initiated" status to Salt backend (best-effort)
-    # ------------------------------------------------------------------
-    - name: Notify Salt backend — Initiated
-      uri:
-        url: "{{ salt_host | regex_replace('/$', '') }}/v1/cloud-connect/scan/ibm"
-        method: POST
-        headers:
-          Authorization: "Bearer {{ salt_auth_token | regex_replace('^Bearer ', '') }}"
-          Content-Type: application/json
-        body_format: json
-        body:
-          accountId: "{{ ibm_account_id }}"
-          stackId: "{{ stack_id }}"
-          region: "global"
-          installationId: "{{ installation_id }}"
-          attemptId: "{{ effective_attempt_id }}"
-          createdBy: "{{ created_by }}"
-          deploymentStatus: "Initiated"
-          connectionFields: null
-        status_code: [200, 201, 202, 204]
-      register: initiated_resp
-      failed_when: false  # Don't block deploy if initial status POST fails
-
-    - name: Log initial status result
-      debug:
-        msg: "Salt backend initial status: HTTP {{ initiated_resp.status | default('error') }}"
-
-    # ------------------------------------------------------------------
-    # 3. Main deployment (wrapped in block/rescue for failure reporting)
-    # ------------------------------------------------------------------
-    - block:
-        - name: Create IAM Service ID
-          ibm.cloudcollection.ibm_iam_service_id:
-            ibmcloud_api_key: "{{ lookup('env', 'IC_API_KEY') }}"
-            region: "{{ ibm_region }}"
-            name: "{{ service_id_name }}"
-            description: "Salt Security read-only Service ID (stack {{ stack_id }})"
-          register: service_id
-
-        - name: Create API key bound to the Service ID
-          ibm.cloudcollection.ibm_iam_service_api_key:
-            ibmcloud_api_key: "{{ lookup('env', 'IC_API_KEY') }}"
-            region: "{{ ibm_region }}"
-            name: "{{ api_key_name }}"
-            iam_service_id: "{{ service_id.resource.iam_id }}"
-            description: "API key issued to Salt Security for API-Connect discovery"
-            store_value: false
-          register: api_key
-          no_log: true  # Don't print the key in playbook output
-
-        - name: Record API key value
-          set_fact:
-            ibm_api_key: "{{ api_key.resource.apikey }}"
-          no_log: true
-
-        - name: Create access group
-          ibm.cloudcollection.ibm_iam_access_group:
-            ibmcloud_api_key: "{{ lookup('env', 'IC_API_KEY') }}"
-            region: "{{ ibm_region }}"
-            name: "{{ access_group_name }}"
-            description: "Read-only access to IBM API Connect for Salt Security Service ID"
-          register: access_group
-
-        - name: Add Service ID to access group
-          ibm.cloudcollection.ibm_iam_access_group_members:
-            ibmcloud_api_key: "{{ lookup('env', 'IC_API_KEY') }}"
-            region: "{{ ibm_region }}"
-            access_group_id: "{{ access_group.resource.id }}"
-            iam_service_ids:
-              - "{{ service_id.resource.id }}"
-
-        # Two roles combined in one policy — IBM treats
-        # (access_group_id, resource_attributes) as the uniqueness key,
-        # so splitting Viewer and Reader into two policies with the same
-        # serviceName scope returns 409.
-        - name: Attach read-only API Connect policy to access group
-          ibm.cloudcollection.ibm_iam_access_group_policy:
-            ibmcloud_api_key: "{{ lookup('env', 'IC_API_KEY') }}"
-            region: "{{ ibm_region }}"
-            access_group_id: "{{ access_group.resource.id }}"
-            roles:
-              - "Viewer"
-              - "Reader"
-            description: "Read-only access to IBM API Connect (Platform Viewer + Service Reader)"
-            resources:
-              - attributes:
-                  - name: "serviceName"
-                    value: "apiconnect"
-
-        # ----------------------------------------------------------
-        # Send "Succeeded" with credentials
-        # ----------------------------------------------------------
-        - name: Notify Salt backend — Succeeded
-          uri:
-            url: "{{ salt_host | regex_replace('/$', '') }}/v1/cloud-connect/scan/ibm"
-            method: POST
-            headers:
-              Authorization: "Bearer {{ salt_auth_token | regex_replace('^Bearer ', '') }}"
-              Content-Type: application/json
-            body_format: json
-            body:
-              accountId: "{{ ibm_account_id }}"
-              stackId: "{{ stack_id }}"
-              region: "global"
-              installationId: "{{ installation_id }}"
-              attemptId: "{{ effective_attempt_id }}"
-              createdBy: "{{ created_by }}"
-              deploymentStatus: "Succeeded"
-              connectionFields:
-                apiKey: "{{ ibm_api_key }}"
-            status_code: [200, 201, 202, 204]
-          no_log: true  # Don't leak the API key via playbook output
-
-        - name: Deployment complete
-          debug:
-            msg:
-              - "✓ Service ID created: {{ service_id.resource.id }}"
-              - "✓ Account ID: {{ ibm_account_id }}"
-              - "✓ Stack ID: {{ stack_id }}"
-              - "✓ API key posted to Salt Security backend"
-
-      # ------------------------------------------------------------------
-      # 4. On ANY task failure above, report Failed + error message
-      # ------------------------------------------------------------------
-      rescue:
-        - name: Capture failure details
-          set_fact:
-            failure_message: >-
-              {{ ansible_failed_result.msg | default('Unknown error') |
-                 regex_replace('\\s+', ' ') | truncate(500, True, '...') }}
-
-        - name: Notify Salt backend — Failed
-          uri:
-            url: "{{ salt_host | regex_replace('/$', '') }}/v1/cloud-connect/scan/ibm"
-            method: POST
-            headers:
-              Authorization: "Bearer {{ salt_auth_token | regex_replace('^Bearer ', '') }}"
-              Content-Type: application/json
-            body_format: json
-            body:
-              accountId: "{{ ibm_account_id | default('') }}"
-              stackId: "{{ stack_id }}"
-              region: "global"
-              installationId: "{{ installation_id }}"
-              attemptId: "{{ effective_attempt_id }}"
-              createdBy: "{{ created_by }}"
-              deploymentStatus: "Failed"
-              errorMessage: "{{ failure_message }}"
-              connectionFields: null
-            status_code: [200, 201, 202, 204]
-          failed_when: false  # Don't mask the real failure with a reporting failure
-
-        - name: Surface the original failure
-          fail:
-            msg: "Deployment failed: {{ failure_message }}"
+    # Dynamic include — FQCN modules inside this file are resolved at
+    # runtime, AFTER the install above. Do not convert to import_tasks;
+    # that resolves at parse time and will fail the same way.
+    - name: Run IBM deployment tasks
+      include_tasks: ibm_tasks.yml
