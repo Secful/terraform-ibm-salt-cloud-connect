@@ -128,6 +128,7 @@ resource "null_resource" "post_credentials" {
       STACK_ID        = local.stack_id
       ATTEMPT_ID      = local.attempt_id
       INSTALLATION_ID = var.installation_id
+      CREATED_BY      = var.created_by
       ACCOUNT_ID      = data.ibm_iam_account_settings.current.account_id
       IBM_API_KEY     = ibm_iam_service_api_key.salt.apikey
       STATUS_FILE     = "${path.module}/.deployment_status"

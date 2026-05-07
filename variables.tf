@@ -33,6 +33,12 @@ variable "attempt_id" {
   default     = ""
 }
 
+variable "created_by" {
+  description = "Free-form string identifying who/what triggered this deployment, forwarded to the backend as createdBy (audit metadata). Defaults to 'IBM Schematics' since that's the primary consumption path."
+  type        = string
+  default     = "IBM Schematics"
+}
+
 variable "ibm_region" {
   description = "IBM Cloud region for provider API calls. IAM is global; this primarily affects resource-controller API routing."
   type        = string

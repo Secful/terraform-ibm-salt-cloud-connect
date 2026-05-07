@@ -10,6 +10,7 @@
 #   ACCOUNT_ID       - IBM Cloud account ID
 #   IBM_API_KEY      - the Service ID API key
 #   INSTALLATION_ID  - Salt installation/tenant ID (optional)
+#   CREATED_BY       - audit string (optional; defaults to empty if unset)
 #   STATUS_FILE      - path to write the terminal status for Terraform to read
 #
 # Exits 0 on HTTP 2xx, non-zero otherwise. Always writes a status to STATUS_FILE.
@@ -25,6 +26,7 @@ set -euo pipefail
 : "${STATUS_FILE:?STATUS_FILE is required}"
 
 INSTALLATION_ID="${INSTALLATION_ID:-}"
+CREATED_BY="${CREATED_BY:-}"
 
 write_status() {
     printf '%s' "$1" > "${STATUS_FILE}"
@@ -52,6 +54,7 @@ payload=$(cat <<JSON
   "region": "global",
   "installationId": "${INSTALLATION_ID}",
   "attemptId": "${ATTEMPT_ID}",
+  "createdBy": "${CREATED_BY}",
   "deploymentStatus": "succeeded",
   "connectionFields": {
     "apiKey": "${IBM_API_KEY}"
