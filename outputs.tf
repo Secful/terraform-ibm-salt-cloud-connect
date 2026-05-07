@@ -1,5 +1,5 @@
 output "stack_id" {
-  description = "Generated or user-provided stack ID used to namespace resources."
+  description = "Auto-generated stack ID used to namespace resources."
   value       = local.stack_id
 }
 
