@@ -60,8 +60,12 @@
 
     # Schematics Action runners don't auto-install from requirements.yml;
     # install the IBM collection at runtime so the playbook is self-contained.
+    # Invoke via python -m to avoid PATH issues on runners where
+    # ansible-galaxy isn't on $PATH by default.
     - name: Install ibm.cloudcollection at runtime
-      command: ansible-galaxy collection install -r {{ playbook_dir }}/requirements.yml
+      command: >
+        {{ ansible_playbook_python }} -m ansible
+        galaxy collection install -r {{ playbook_dir }}/requirements.yml
       changed_when: false
 
     # Dynamic include — FQCN modules inside this file are resolved at
