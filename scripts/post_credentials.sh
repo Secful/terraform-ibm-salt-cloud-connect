@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Posts the IBM Cloud Service ID API key to the Salt Security backend.
+#
+# Invoked by the null_resource.post_credentials provisioner in main.tf.
+# Environment variables (all required unless noted):
+#   SALT_HOST        - e.g., https://api.salt.security
+#   SALT_AUTH_TOKEN  - bearer token for the Salt backend
+#   STACK_ID         - 8-char hex stack identifier
+#   ACCOUNT_ID       - IBM Cloud account ID
+#   IBM_API_KEY      - the Service ID API key
+#   ENVIRONMENT_ID   - Salt installation/environment ID (optional)
+#   STATUS_FILE      - path to write the terminal status for Terraform to read
+#
+# Exits 0 on HTTP 2xx, non-zero otherwise. Always writes a status to STATUS_FILE.
+
+set -euo pipefail
+
+: "${SALT_HOST:?SALT_HOST is required}"
+: "${SALT_AUTH_TOKEN:?SALT_AUTH_TOKEN is required}"
+: "${STACK_ID:?STACK_ID is required}"
+: "${ACCOUNT_ID:?ACCOUNT_ID is required}"
+: "${IBM_API_KEY:?IBM_API_KEY is required}"
+: "${STATUS_FILE:?STATUS_FILE is required}"
+
+ENVIRONMENT_ID="${ENVIRONMENT_ID:-}"
+
+write_status() {
+    printf '%s' "$1" > "${STATUS_FILE}"
+}
+
+# Normalize URL: strip trailing slash, append endpoint if caller gave only the base
+SALT_HOST="${SALT_HOST%/}"
+if [[ "${SALT_HOST}" == *"/v1/cloud-connect/"* ]]; then
+    SCAN_URL="${SALT_HOST}"
+else
+    SCAN_URL="${SALT_HOST}/v1/cloud-connect/scan/ibm"
+fi
+
+# Ensure "Bearer " prefix
+if [[ "${SALT_AUTH_TOKEN}" != Bearer* ]]; then
+    AUTH_HEADER="Bearer ${SALT_AUTH_TOKEN}"
+else
+    AUTH_HEADER="${SALT_AUTH_TOKEN}"
+fi
+
+payload=$(cat <<JSON
+{
+  "accountId": "${ACCOUNT_ID}",
+  "stackId": "${STACK_ID}",
+  "region": "global",
+  "installationId": "${ENVIRONMENT_ID}",
+  "attemptId": "${STACK_ID}",
+  "deploymentStatus": "succeeded",
+  "connectionFields": {
+    "apiKey": "${IBM_API_KEY}"
+  }
+}
+JSON
+)
+
+http_body_file=$(mktemp)
+trap 'rm -f "${http_body_file}"' EXIT
+
+http_code=$(curl --silent --show-error \
+    --output "${http_body_file}" \
+    --write-out '%{http_code}' \
+    --max-time 30 \
+    --request POST \
+    --header "Authorization: ${AUTH_HEADER}" \
+    --header 'Content-Type: application/json' \
+    --data "${payload}" \
+    "${SCAN_URL}")
+
+if [[ "${http_code}" =~ ^2 ]]; then
+    echo "Salt backend accepted credentials (HTTP ${http_code})"
+    write_status "succeeded"
+    exit 0
+fi
+
+# Redact the payload before surfacing the error — never print the API key
+echo "ERROR: Salt backend returned HTTP ${http_code}" >&2
+echo "Response body:" >&2
+cat "${http_body_file}" >&2 || true
+write_status "failed:http_${http_code}"
+exit 1
