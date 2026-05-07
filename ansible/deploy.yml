@@ -48,6 +48,12 @@
     ibm_api_key: ""
 
   pre_tasks:
+    # Schematics Action runners don't auto-install from requirements.yml —
+    # install the IBM collection inline so the playbook is self-contained.
+    - name: Install required Ansible collections
+      command: ansible-galaxy collection install -r {{ playbook_dir }}/requirements.yml
+      changed_when: false
+
     - name: Verify required variables are set
       assert:
         that:
