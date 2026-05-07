@@ -52,12 +52,6 @@
           - salt_auth_token | length > 0
         fail_msg: "salt_host and salt_auth_token must be provided via -e"
 
-    - name: Verify IC_API_KEY is set in environment
-      assert:
-        that:
-          - lookup('env', 'IC_API_KEY') | length > 0
-        fail_msg: "IC_API_KEY environment variable is required"
-
     # Schematics Action runners don't auto-install from requirements.yml;
     # install the IBM collection at runtime so the playbook is self-contained.
     # Invoke via python -m to avoid PATH issues on runners where
