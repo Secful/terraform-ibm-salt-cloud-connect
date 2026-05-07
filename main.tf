@@ -1,10 +1,5 @@
 locals {
-  attempt_id_provided = length(trimspace(var.attempt_id)) > 0
-
-  stack_id        = substr(random_id.stack.hex, 0, 8)
-  installation_id = random_uuid.installation.result
-  attempt_id      = local.attempt_id_provided ? var.attempt_id : random_uuid.attempt[0].result
-  created_by      = "IBM Schematics"
+  stack_id = substr(random_id.stack.hex, 0, 8)
 
   service_id_name   = "salt-security-sid-${local.stack_id}"
   api_key_name      = "salt-security-key-${local.stack_id}"
@@ -13,12 +8,6 @@ locals {
 
 resource "random_id" "stack" {
   byte_length = 4
-}
-
-resource "random_uuid" "installation" {}
-
-resource "random_uuid" "attempt" {
-  count = local.attempt_id_provided ? 0 : 1
 }
 
 data "ibm_iam_account_settings" "current" {}
@@ -45,18 +34,12 @@ resource "ibm_iam_service_api_key" "salt" {
   name           = local.api_key_name
   iam_service_id = ibm_iam_service_id.salt.iam_id
   description    = "API key issued to Salt Security for API-Connect discovery"
-  store_value    = false
 }
 
 # ----------------------------------------------------------------------------
 # Access group with least-privilege policies scoped to IBM API Connect only.
 # Permissions live on the group (not the Service ID directly) so they can be
 # updated without re-issuing the key.
-#
-# Scope matches the AWS-side precedent in
-# cloud-connect-deployments/aws/manual-setup/discovery-policy.json, which
-# grants apigateway:GET on Resource:* — i.e., read-only on exactly one
-# service, nothing else.
 #
 # Two policies are required (dropping either breaks the scan):
 #   1. Platform Viewer — lets the Service ID see the API Connect instance
@@ -99,49 +82,4 @@ resource "ibm_iam_access_group_policy" "apiconnect" {
       "serviceName" = "apiconnect"
     }
   }
-}
-
-# ----------------------------------------------------------------------------
-# Send the freshly-minted API key to the Salt backend.
-#
-# We use a null_resource + local-exec so the key payload never lands in
-# Terraform outputs or the Schematics state viewer. The script writes the
-# backend response to a file which we read back via data.local_file for the
-# deployment_status output.
-# ----------------------------------------------------------------------------
-resource "null_resource" "post_credentials" {
-  triggers = {
-    stack_id   = local.stack_id
-    attempt_id = local.attempt_id
-    service_id = ibm_iam_service_id.salt.id
-    api_key_id = ibm_iam_service_api_key.salt.id
-  }
-
-  provisioner "local-exec" {
-    command     = "${path.module}/scripts/post_credentials.sh"
-    interpreter = ["bash", "-c"]
-
-    environment = {
-      SALT_HOST       = var.salt_host
-      SALT_AUTH_TOKEN = var.salt_auth_token
-      STACK_ID        = local.stack_id
-      ATTEMPT_ID      = local.attempt_id
-      INSTALLATION_ID = local.installation_id
-      CREATED_BY      = local.created_by
-      ACCOUNT_ID      = data.ibm_iam_account_settings.current.account_id
-      IBM_API_KEY     = ibm_iam_service_api_key.salt.apikey
-      STATUS_FILE     = "${path.module}/.deployment_status"
-    }
-  }
-
-  depends_on = [
-    ibm_iam_access_group_policy.apiconnect,
-    ibm_iam_access_group_members.salt,
-  ]
-}
-
-data "local_file" "post_result" {
-  filename = "${path.module}/.deployment_status"
-
-  depends_on = [null_resource.post_credentials]
 }
