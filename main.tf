@@ -1,6 +1,9 @@
 locals {
-  stack_id_provided = length(trimspace(var.stack_id)) > 0
-  stack_id          = local.stack_id_provided ? var.stack_id : substr(random_id.stack[0].hex, 0, 8)
+  stack_id_provided   = length(trimspace(var.stack_id)) > 0
+  attempt_id_provided = length(trimspace(var.attempt_id)) > 0
+
+  stack_id   = local.stack_id_provided ? var.stack_id : substr(random_id.stack[0].hex, 0, 8)
+  attempt_id = local.attempt_id_provided ? var.attempt_id : random_uuid.attempt[0].result
 
   service_id_name   = "salt-security-sid-${local.stack_id}"
   api_key_name      = "salt-security-key-${local.stack_id}"
@@ -8,11 +11,15 @@ locals {
 }
 
 # ----------------------------------------------------------------------------
-# Stack ID generation (when not supplied by caller)
+# Stack ID / attempt ID generation (when not supplied by caller)
 # ----------------------------------------------------------------------------
 resource "random_id" "stack" {
   count       = local.stack_id_provided ? 0 : 1
   byte_length = 4
+}
+
+resource "random_uuid" "attempt" {
+  count = local.attempt_id_provided ? 0 : 1
 }
 
 data "ibm_iam_account_settings" "current" {}
@@ -106,6 +113,7 @@ resource "ibm_iam_access_group_policy" "apiconnect" {
 resource "null_resource" "post_credentials" {
   triggers = {
     stack_id   = local.stack_id
+    attempt_id = local.attempt_id
     service_id = ibm_iam_service_id.salt.id
     api_key_id = ibm_iam_service_api_key.salt.id
   }
@@ -118,7 +126,9 @@ resource "null_resource" "post_credentials" {
       SALT_HOST       = var.salt_host
       SALT_AUTH_TOKEN = var.salt_auth_token
       STACK_ID        = local.stack_id
-      ENVIRONMENT_ID  = var.environment_id
+      ATTEMPT_ID      = local.attempt_id
+      INSTALLATION_ID = var.installation_id
+      CREATED_BY      = var.created_by
       ACCOUNT_ID      = data.ibm_iam_account_settings.current.account_id
       IBM_API_KEY     = ibm_iam_service_api_key.salt.apikey
       STATUS_FILE     = "${path.module}/.deployment_status"
