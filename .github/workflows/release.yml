@@ -1,4 +1,4 @@
-name: terraform-ibm-salt-cloud-connect
+name: Release
 
 on:
   push:
@@ -9,10 +9,29 @@ permissions:
   contents: read
 
 jobs:
-  bump:
-    uses: Secful/salt-cicd/.github/workflows/bump.yml@master
-    permissions:
-      id-token: write
-      contents: write
+  bump_and_release:
     if: github.ref == 'refs/heads/master'
-    secrets: inherit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version
+        id: bump
+        uses: anothrNick/github-tag-action@1.67.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRERELEASE: false
+          WITH_V: true
+          DEFAULT_BUMP: patch
+          FORCE_WITHOUT_CHANGES: true
+
+      - name: Create release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.bump.outputs.new_tag }}
+          name: ${{ steps.bump.outputs.new_tag }}
+          generateReleaseNotes: true
