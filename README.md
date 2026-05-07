@@ -16,30 +16,6 @@ This workspace creates:
    every resource in the account (read-only)
 4. Posts the API key to your Salt Security backend
 
-If you'd rather run this as a CLI instead of through the IBM Cloud console,
-see `ibm/single_account/` (Python CLI — CNG-1226).
-
----
-
-## Why an API key, not keyless federation?
-
-IBM IAM's Trusted Profile claim rules support only two identity sources:
-
-- **`Profile-SAML`** — requires a SAML IdP registered in the customer's IBM
-  account
-- **`Profile-CR`** — requires the workload to run on IBM Cloud compute
-  (IKS / VSI / Code Engine)
-
-Salt's scanner runs on AWS EKS, not IBM compute, and neither party currently
-operates a SAML IdP suitable for cross-cloud federation. IBM has no direct
-equivalent of GCP's `create-aws` workload-identity provider or an OIDC
-claim-rule type that could trust EKS's OIDC issuer. A Service ID API key is
-the practical auth option until a dedicated federation broker is built — see
-`ibm/DESIGN.md` for the full rationale.
-
-The key is stored encrypted by the Salt backend and used to mint short-lived
-IAM bearer tokens at scan time.
-
 ---
 
 ## Deploy via IBM Schematics (console)
@@ -51,15 +27,11 @@ link like this:
 
 ```
 https://cloud.ibm.com/schematics/workspaces/create
-  ?repository=https://github.com/Secful/salt-ibm-terraform
+  ?repository=https://github.com/Secful/terraform-ibm-salt-cloud-connect
   &terraform_version=terraform_v1.9
   &tf_var_salt_host=https%3A%2F%2Fapi.salt.security
   &tf_var_environment_id=env-abc123
 ```
-
-> The `Secful/salt-ibm-terraform` URL above is a placeholder for the public
-> mirror Salt will publish. The canonical source lives in the private
-> `cloud-connect-deployments` repo.
 
 Customer steps once they click the link:
 
@@ -130,9 +102,8 @@ Service ID cannot read:
 - Kubernetes (IKS/ROKS) clusters, secrets, or workloads
 - VPC networking, Virtual Servers, or any other IBM service
 
-This matches the AWS-side precedent in
-`aws/manual-setup/discovery-policy.json` which grants `apigateway:GET` on
-`Resource: "*"` — read-only on exactly the one service being scanned.
+This mirrors the least-privilege approach Salt uses on other clouds —
+read-only on exactly the one service being scanned, nothing else.
 
 Two policies are required because IBM IAM splits responsibilities: Platform
 Viewer lets the Service ID see that the API Connect instance exists (needed
@@ -187,8 +158,7 @@ terraform destroy
 
 This removes the Service ID, API key, access group, and policies. It does
 **not** deregister the connector from Salt — use the Salt Security dashboard
-for that, or wait for a follow-up deletion script (modeled after
-`gcp/single_account/`).
+for that.
 
 ---
 
@@ -209,3 +179,9 @@ The module is designed to be consumed directly by Schematics (no state
 backend config needed — Schematics manages state). Local development against
 your own IBM account works the same way with an `IC_API_KEY` env var for the
 `ibm` provider.
+
+---
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).
