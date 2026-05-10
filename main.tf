@@ -122,6 +122,12 @@ resource "ibm_iam_service_api_key" "salt_api_key" {
 resource "ibm_iam_access_group" "salt_access_group" {
   name        = local.access_group_name
   description = "Read-only access to IBM API Connect for Salt Security Service ID"
+
+  # The access group is in a parallel dependency branch from the Service ID,
+  # so without this explicit block Terraform starts creating it (and the
+  # policies below) concurrently with the Initiated POST — defeating the
+  # "nothing exists unless Salt acknowledged the attempt" guarantee.
+  depends_on = [null_resource.post_initiated]
 }
 
 resource "ibm_iam_access_group_members" "salt_access_group_membership" {
@@ -137,6 +143,7 @@ resource "ibm_iam_access_group_policy" "salt_apiconnect_policy" {
   access_group_id = ibm_iam_access_group.salt_access_group.id
   roles           = ["Viewer", "Reader"]
   description     = "Read-only access to IBM API Connect (Platform Viewer + Service Reader)"
+
 
   # NOTE 1: accountId is injected automatically by the IBM provider from the
   # authenticated session — adding it explicitly causes "invalid_body: The
