@@ -1,11 +1,18 @@
 # terraform-ibm-salt-cloud-connect
 
 Terraform module that creates the IBM Cloud IAM resources Salt Security's
-scanner needs to read your API Connect metadata. Intentionally **pure
-provisioning** — no network calls, no provisioners, no Salt-specific inputs.
+scanner needs to read your API Connect metadata.
 
-An orchestrating script (Salt's onboarding flow, or `ibm/onboarding/` in the
-parent repo) reads the outputs and POSTs them to the Salt backend.
+Two ways to drive it:
+
+- **Default (`manual_deploy = false`)** — pure declarative IAM provisioning,
+  no network calls. An external orchestrator (Salt's onboarding flow, or
+  `ibm/onboarding/cloud-shell-onboard.sh` in the parent repo) reads the
+  outputs and POSTs them to the Salt backend.
+- **Manual Schematics (`manual_deploy = true`)** — opt-in for customers
+  applying from the Schematics UI without the orchestrator. Terraform
+  itself POSTs Initiated/Succeeded to the Salt backend via `null_resource`
+  + `local-exec`. Requires `salt_host`, `salt_auth_token`, `attempt_id`.
 
 ## What it creates
 
@@ -102,19 +109,36 @@ terraform output -raw api_key
 
 ## Schematics use
 
-Create a Schematics workspace pointing at this repo. No variables need to
-be set.
+Create a Schematics workspace pointing at this repo:
 
 ```
 Repository URL:     https://github.com/Secful/terraform-ibm-salt-cloud-connect
 Terraform version:  terraform_v1.9
 ```
 
-Apply. The API key is available on the **Resources → Outputs** tab, or via:
+### When the Cloud Shell orchestrator drives the apply
+
+Leave all variables unset. The orchestrator reads the outputs after apply and
+POSTs them to Salt. API key is available on the **Resources → Outputs** tab,
+or via:
 
 ```sh
 ibmcloud schematics workspace output --id <workspace_id> --output json
 ```
+
+### When the customer applies directly from the Schematics UI
+
+Set the following variables in the workspace:
+
+| Variable          | Value                                               |
+| ----------------- | --------------------------------------------------- |
+| `manual_deploy`   | `true`                                              |
+| `salt_host`       | Salt backend URL (from Salt dashboard)              |
+| `salt_auth_token` | Bearer token (paste into the Schematics form)       |
+| `attempt_id`      | Onboarding attempt UUID (from Salt dashboard)       |
+
+Apply. Terraform POSTs `Initiated` before IAM creation and `Succeeded` after.
+No orchestrator or follow-up step is required.
 
 ## Cleanup
 
