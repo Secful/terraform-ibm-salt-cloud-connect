@@ -121,7 +121,7 @@ Create a Schematics workspace pointing at this repo:
 
 ```
 Repository URL:     https://github.com/Secful/terraform-ibm-salt-cloud-connect
-Terraform version:  terraform_v1.9
+Terraform version:  terraform_v1.13
 ```
 
 ### When the Cloud Shell orchestrator drives the apply
