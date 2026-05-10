@@ -83,10 +83,23 @@ resource "ibm_iam_service_id" "scanner" {
   depends_on = [null_resource.post_initiated]
 }
 
+# IBM IAM is eventually consistent: creating an API key against a freshly
+# created Service ID can fail with "Unable to find object" because the
+# Service ID hasn't propagated yet. Terraform's implicit dependency only
+# waits for the Service ID to be in state, not for IAM to finish replicating
+# it. A short sleep here (~10s, per the ibm-cloud/ibm provider's known
+# issues) is the community-recommended workaround.
+resource "time_sleep" "wait_for_service_id" {
+  depends_on      = [ibm_iam_service_id.scanner]
+  create_duration = "10s"
+}
+
 resource "ibm_iam_service_api_key" "scanner_key" {
   name           = local.api_key_name
   iam_service_id = ibm_iam_service_id.scanner.iam_id
   description    = "API key issued to Salt Security for API-Connect discovery"
+
+  depends_on = [time_sleep.wait_for_service_id]
 }
 
 # ----------------------------------------------------------------------------
@@ -114,6 +127,10 @@ resource "ibm_iam_access_group" "scanner_group" {
 resource "ibm_iam_access_group_members" "scanner_membership" {
   access_group_id = ibm_iam_access_group.scanner_group.id
   iam_service_ids = [ibm_iam_service_id.scanner.id]
+
+  # Same propagation race as the API key: the Service ID must be visible
+  # to IAM before it can be added to an access group.
+  depends_on = [time_sleep.wait_for_service_id]
 }
 
 resource "ibm_iam_access_group_policy" "apiconnect_policy" {
