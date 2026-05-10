@@ -1,5 +1,5 @@
 # The module is self-contained when driven by an external orchestrator (e.g.
-# ibm/onboarding/ibm-connect-onboard.sh in the parent cloud-connect-deployments
+# ibm/single_account/ibm-connect-onboard.sh in the parent cloud-connect-deployments
 # repo), which reads the outputs and posts them to the Salt Security backend
 # itself. In that case leave manual_deploy = false and all other variables
 # unset.
