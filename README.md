@@ -7,7 +7,7 @@ Two ways to drive it:
 
 - **Default (`manual_deploy = false`)** — pure declarative IAM provisioning,
   no network calls. An external orchestrator (Salt's onboarding flow, or
-  `ibm/onboarding/cloud-shell-onboard.sh` in the parent repo) reads the
+  `ibm/onboarding/ibm-connect-onboard.sh` in the parent repo) reads the
   outputs and POSTs them to the Salt backend.
 - **Manual Schematics (`manual_deploy = true`)** — opt-in for customers
   applying from the Schematics UI without the orchestrator. Terraform
@@ -30,7 +30,7 @@ Two ways to drive it:
 ## Inputs
 
 By default the module is **self-contained** — no variables need to be set. An
-external orchestrator (e.g. `ibm/onboarding/cloud-shell-onboard.sh` in the
+external orchestrator (e.g. `ibm/onboarding/ibm-connect-onboard.sh` in the
 parent repo) reads the outputs and POSTs them to the Salt backend.
 
 ### Manual deploy (`manual_deploy = true`)
