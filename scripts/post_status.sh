@@ -41,6 +41,7 @@ payload=$(jq -n \
     --arg installationId "${INSTALLATION_ID:-}" \
     --arg accountId "${ACCOUNT_ID:-}" \
     --arg deploymentStatus "$DEPLOYMENT_STATUS" \
+    --arg errorMessage "${ERROR_MESSAGE:-}" \
     --arg createdBy "IBM Schematics (manual deploy)" \
     --arg apiKey "${API_KEY:-}" \
     '{
@@ -51,6 +52,7 @@ payload=$(jq -n \
         region: "global",
         createdBy: $createdBy,
         deploymentStatus: $deploymentStatus,
+        errorMessage: $errorMessage,
         connectionFields: (if $apiKey != "" then {apiKey: $apiKey} else null end)
     }')
 
