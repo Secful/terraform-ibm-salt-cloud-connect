@@ -83,3 +83,15 @@ resource "ibm_iam_access_group_policy" "apiconnect" {
     }
   }
 }
+
+# Account Management → Viewer: lets the Service ID read account-level
+# metadata (most importantly, the account name/alias displayed in the Salt
+# dashboard). Account Management services are a separate IAM policy family
+# from regular services, so this doesn't collide with the apiconnect policy
+# above.
+resource "ibm_iam_access_group_policy" "account_management" {
+  access_group_id    = ibm_iam_access_group.salt.id
+  roles              = ["Viewer"]
+  description        = "Read account-level metadata (account name) for Salt dashboard"
+  account_management = true
+}

@@ -15,7 +15,8 @@ parent repo) reads the outputs and POSTs them to the Salt backend.
 | `ibm_iam_service_api_key`      | `salt-security-key-<stack_id>`        | —                        |
 | `ibm_iam_access_group`         | `salt-security-ag-<stack_id>`         | —                        |
 | `ibm_iam_access_group_members` | Service ID → access group             | —                        |
-| `ibm_iam_access_group_policy`  | Viewer + Reader combined              | `serviceName=apiconnect` |
+| `ibm_iam_access_group_policy`  | Viewer + Reader                       | `serviceName=apiconnect` |
+| `ibm_iam_access_group_policy`  | Viewer                                | Account Management       |
 
 `stack_id` is an auto-generated 8-char hex suffix.
 
@@ -37,20 +38,24 @@ parent repo) reads the outputs and POSTs them to the Salt backend.
 
 ## Least-privilege scope
 
-The access group grants **read-only access to IBM API Connect and nothing
-else**. Both policies are constrained to `serviceName=apiconnect`, so the
-Service ID cannot read:
+The access group grants **read-only access to IBM API Connect, plus
+read-only visibility of account-level metadata (account name) — and nothing
+else**. The Service ID cannot read:
 
 - IAM users, Service IDs, access groups, policies
 - Cloud Object Storage buckets or objects
 - Kubernetes (IKS/ROKS) clusters, secrets, or workloads
 - VPC networking, Virtual Servers, or any other IBM service
 
-Two policies are required because IBM IAM splits responsibilities: Platform
-Viewer lets the Service ID see that the API Connect instance exists (needed
-to traverse the provider-orgs → catalogs → spaces → APIs hierarchy), and
-Service Reader lets it call the API Connect management APIs to export
-OpenAPI specs.
+The apiconnect policy combines two roles because IBM IAM splits
+responsibilities: Platform Viewer lets the Service ID see that the API
+Connect instance exists (needed to traverse the provider-orgs → catalogs →
+spaces → APIs hierarchy), and Service Reader lets it call the API Connect
+management APIs to export OpenAPI specs.
+
+The Account Management Viewer policy is a separate IAM policy family and
+exists so Salt's dashboard can display the customer's IBM account name
+alongside scan results.
 
 ## Prerequisites
 
