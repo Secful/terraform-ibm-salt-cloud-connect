@@ -63,6 +63,14 @@ true`.
 | `api_key`           | ✅        | The API key value — consume via `terraform output -raw api_key` |
 | `access_group_id`   |           | `AccessGroupId-<uuid>`                                   |
 
+## Region
+
+IBM IAM is account-scoped (global), not regional. The Service ID, API key,
+access group, and policies this module creates apply **across every IBM
+region** where the customer has API Connect instances — no per-region
+deployment needed. The region the Schematics workspace runs in is cosmetic
+(metadata/billing-locality only).
+
 ## Least-privilege scope
 
 The access group grants **read-only access to IBM API Connect, plus
