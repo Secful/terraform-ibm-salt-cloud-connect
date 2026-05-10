@@ -13,6 +13,55 @@ resource "random_id" "stack" {
 data "ibm_iam_account_settings" "current" {}
 
 # ============================================================================
+# Manual-deploy validation
+#
+# When manual_deploy is false, an external orchestrator (the Cloud Shell
+# script) POSTs to the Salt backend. Leave the salt_* variables unset.
+#
+# When manual_deploy is true, Terraform POSTs from inside `apply` itself via
+# the null_resources below, so salt_host / salt_auth_token / attempt_id must
+# all be non-empty.
+# ============================================================================
+resource "null_resource" "manual_deploy_validation" {
+  count = var.manual_deploy ? 1 : 0
+
+  lifecycle {
+    precondition {
+      condition     = !var.manual_deploy || (var.salt_host != "" && var.salt_auth_token != "" && var.attempt_id != "")
+      error_message = "manual_deploy = true requires salt_host, salt_auth_token, and attempt_id to be set."
+    }
+  }
+}
+
+# ============================================================================
+# Manual-deploy: POST "Initiated" before any IAM resources are created.
+#
+# Runs first so the Salt backend registers the attempt even if subsequent IAM
+# creation fails. IAM resources depend on this null_resource to enforce
+# ordering.
+# ============================================================================
+resource "null_resource" "post_initiated" {
+  count = var.manual_deploy ? 1 : 0
+
+  triggers = {
+    attempt_id = var.attempt_id
+  }
+
+  provisioner "local-exec" {
+    command = "${path.module}/scripts/post_status.sh"
+    environment = {
+      SALT_HOST         = var.salt_host
+      SALT_AUTH_TOKEN   = var.salt_auth_token
+      ATTEMPT_ID        = var.attempt_id
+      INSTALLATION_ID   = var.installation_id
+      DEPLOYMENT_STATUS = "Initiated"
+    }
+  }
+
+  depends_on = [null_resource.manual_deploy_validation]
+}
+
+# ============================================================================
 # IAM Service ID + API key
 #
 # Salt's scanner authenticates to IBM Cloud using the API key bound to this
@@ -28,6 +77,8 @@ data "ibm_iam_account_settings" "current" {}
 resource "ibm_iam_service_id" "salt" {
   name        = local.service_id_name
   description = "Salt Security read-only Service ID (stack ${local.stack_id})"
+
+  depends_on = [null_resource.post_initiated]
 }
 
 resource "ibm_iam_service_api_key" "salt" {
@@ -94,4 +145,41 @@ resource "ibm_iam_access_group_policy" "account_management" {
   roles              = ["Viewer"]
   description        = "Read account-level metadata (account name) for Salt dashboard"
   account_management = true
+}
+
+# ============================================================================
+# Manual-deploy: POST "Succeeded" after all IAM resources are ready.
+#
+# Runs last (depends on every IAM resource) so the API key, access group, and
+# both policies are confirmed created before we tell Salt the onboarding is
+# done. The script receives the stack_id, account_id, service_id, and api_key
+# via env vars and forwards them in connectionFields.
+# ============================================================================
+resource "null_resource" "post_succeeded" {
+  count = var.manual_deploy ? 1 : 0
+
+  triggers = {
+    api_key_id = ibm_iam_service_api_key.salt.id
+  }
+
+  provisioner "local-exec" {
+    command = "${path.module}/scripts/post_status.sh"
+    environment = {
+      SALT_HOST         = var.salt_host
+      SALT_AUTH_TOKEN   = var.salt_auth_token
+      ATTEMPT_ID        = var.attempt_id
+      INSTALLATION_ID   = var.installation_id
+      DEPLOYMENT_STATUS = "Succeeded"
+      STACK_ID          = local.stack_id
+      ACCOUNT_ID        = data.ibm_iam_account_settings.current.account_id
+      SERVICE_ID        = ibm_iam_service_id.salt.id
+      API_KEY           = ibm_iam_service_api_key.salt.apikey
+    }
+  }
+
+  depends_on = [
+    ibm_iam_access_group_members.salt,
+    ibm_iam_access_group_policy.apiconnect,
+    ibm_iam_access_group_policy.account_management,
+  ]
 }

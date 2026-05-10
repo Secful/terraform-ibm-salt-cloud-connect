@@ -22,7 +22,27 @@ parent repo) reads the outputs and POSTs them to the Salt backend.
 
 ## Inputs
 
-**None.** The module is self-contained.
+By default the module is **self-contained** — no variables need to be set. An
+external orchestrator (e.g. `ibm/onboarding/cloud-shell-onboard.sh` in the
+parent repo) reads the outputs and POSTs them to the Salt backend.
+
+### Manual deploy (`manual_deploy = true`)
+
+For customers applying from the Schematics UI **without** the Cloud Shell
+orchestrator, set `manual_deploy = true` and Terraform will POST the Initiated
+(before IAM creation) and Succeeded (after) statuses to the Salt backend
+itself via `null_resource` + `local-exec`.
+
+| Variable           | Required in manual mode | Description                                           |
+| ------------------ | ----------------------- | ----------------------------------------------------- |
+| `manual_deploy`    | —                       | Set `true` to have Terraform POST statuses itself     |
+| `salt_host`        | ✅                       | Salt backend URL (e.g. `https://api.salt.security`)   |
+| `salt_auth_token`  | ✅                       | Bearer token from the Salt dashboard (sensitive)      |
+| `attempt_id`       | ✅                       | Onboarding attempt UUID from the Salt backend         |
+| `installation_id`  |                         | Salt tenant/installation UUID                         |
+
+A precondition enforces the required fields at plan time if `manual_deploy =
+true`.
 
 ## Outputs
 
