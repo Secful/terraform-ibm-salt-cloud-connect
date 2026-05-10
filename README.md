@@ -7,7 +7,7 @@ Two ways to drive it:
 
 - **Default (`manual_deploy = false`)** — pure declarative IAM provisioning,
   no network calls. An external orchestrator (Salt's onboarding flow, or
-  `ibm/onboarding/ibm-connect-onboard.sh` in the parent repo) reads the
+  `ibm/single_account/ibm-connect-onboard.sh` in the parent repo) reads the
   outputs and POSTs them to the Salt backend.
 - **Manual Schematics (`manual_deploy = true`)** — opt-in for customers
   applying from the Schematics UI without the orchestrator. Terraform
@@ -30,7 +30,7 @@ Two ways to drive it:
 ## Inputs
 
 By default the module is **self-contained** — no variables need to be set. An
-external orchestrator (e.g. `ibm/onboarding/ibm-connect-onboard.sh` in the
+external orchestrator (e.g. `ibm/single_account/ibm-connect-onboard.sh` in the
 parent repo) reads the outputs and POSTs them to the Salt backend.
 
 ### Manual deploy (`manual_deploy = true`)
@@ -51,6 +51,11 @@ itself via `null_resource` + `local-exec`.
 A precondition enforces the required fields at plan time if `manual_deploy =
 true`.
 
+> **Note on Schematics behavior:** Schematics runs Terraform in a sandboxed
+> container and rewrites every `local-exec` provisioner to `safe-local-exec`
+> in its apply logs. The `local-exec` in this module's `main.tf` is the same
+> thing — Schematics is just labelling it for transparency.
+
 ## Outputs
 
 | Output              | Sensitive | Description                                              |
@@ -62,6 +67,21 @@ true`.
 | `api_key_id`        |           | `ApiKey-<uuid>`                                          |
 | `api_key`           | ✅        | The API key value — consume via `terraform output -raw api_key` |
 | `access_group_id`   |           | `AccessGroupId-<uuid>`                                   |
+
+## Security considerations
+
+- **`salt_auth_token` lives in Terraform state.** When `manual_deploy = true`
+  the token is passed to a `local-exec` provisioner, which means it's
+  recorded in `terraform.tfstate`. For Schematics deployments the state is
+  encrypted at rest, but anyone with workspace read access can retrieve
+  it. Treat the token like any other secret.
+- **`api_key` is displayed in plaintext on the Schematics Outputs tab.**
+  Marking an output `sensitive = true` hides it from the Terraform CLI, but
+  Schematics' UI shows it anyway. **Do not grant workspace viewer access to
+  anyone you wouldn't give the API key to.** If you need to share workspace
+  access with other IAM identities, consider running `terraform destroy`
+  and re-deploying after the collaboration ends.
+- **Minimum-trust scope by design** — see [Least-privilege scope](#least-privilege-scope).
 
 ## Region
 
@@ -94,11 +114,32 @@ alongside scan results.
 
 ## Prerequisites
 
-- IBM Cloud account (Pay-As-You-Go or higher — the Lite tier cannot create
-  Service IDs)
-- IBM Cloud user with **IAM Identity Service → Administrator** and
-  **access-group admin** permissions
-- The `IC_API_KEY` env var set (for local dev) or a Schematics workspace
+### IBM Cloud account
+
+- Pay-As-You-Go or higher — the Lite tier cannot create Service IDs.
+
+### IAM permissions the caller needs
+
+The user (or Service ID) running `terraform apply` must have permission to
+create, read, and delete the resources this module manages. The simplest
+grant is the **Administrator** role on the following platform services at
+the account scope:
+
+| Service / scope                        | Role            | Why                                         |
+| -------------------------------------- | --------------- | ------------------------------------------- |
+| IAM Identity Service                   | Administrator   | Create/delete the Service ID and API key    |
+| IAM Access Groups Service              | Administrator   | Create/delete the access group + policies   |
+| All Account Management Services        | Administrator   | Assign the Account Management Viewer policy |
+| All Identity and Access enabled services | Viewer       | `data.ibm_iam_account_settings` read        |
+
+A narrower (but harder to specify) alternative is the Account Owner IBMid,
+which implicitly has all of the above.
+
+### CLI / tooling
+
+- `terraform` ≥ 1.9.0 (for local use)
+- `ibmcloud` CLI (for Schematics use — pre-installed in IBM Cloud Shell)
+- `IC_API_KEY` env var set (for local dev) or a Schematics workspace
   with credentials configured
 
 ## Local use
@@ -114,6 +155,9 @@ terraform apply
 # Hand the API key to your orchestration:
 terraform output -raw api_key
 ```
+
+See [`examples/basic`](examples/basic) and
+[`examples/manual-deploy`](examples/manual-deploy) for copy-paste templates.
 
 ## Schematics use
 
@@ -131,7 +175,7 @@ POSTs them to Salt. API key is available on the **Resources → Outputs** tab,
 or via:
 
 ```sh
-ibmcloud schematics workspace output --id <workspace_id> --output json
+ibmcloud schematics output --id <workspace_id> --output JSON
 ```
 
 ### When the customer applies directly from the Schematics UI
@@ -150,11 +194,25 @@ No orchestrator or follow-up step is required.
 
 ## Cleanup
 
+### Local Terraform
+
 ```sh
 terraform destroy
 ```
 
-Removes the Service ID, API key, access group, and policies.
+### Schematics
+
+```sh
+ibmcloud schematics destroy --id <workspace_id> --force
+ibmcloud schematics workspace delete --id <workspace_id> --force
+```
+
+Or use the companion offboarding script
+(`ibm/single_account/ibm-connect-offboard.sh` in the parent repo), which
+drives both commands and notifies the Salt backend.
+
+Either cleanup path removes the Service ID, API key, access group, and
+policies.
 
 ## License
 

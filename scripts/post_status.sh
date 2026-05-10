@@ -35,6 +35,9 @@ for cmd in jq curl; do
     }
 done
 
+RESP_FILE=$(mktemp -t salt-resp.XXXXXX)
+trap 'rm -f "$RESP_FILE"' EXIT
+
 payload=$(jq -n \
     --arg attemptId "$ATTEMPT_ID" \
     --arg stackId "${STACK_ID:-}" \
@@ -42,7 +45,7 @@ payload=$(jq -n \
     --arg accountId "${ACCOUNT_ID:-}" \
     --arg deploymentStatus "$DEPLOYMENT_STATUS" \
     --arg errorMessage "${ERROR_MESSAGE:-}" \
-    --arg createdBy "IBM Schematics (manual deploy)" \
+    --arg createdBy "IBM Cloud Schematics" \
     --arg apiKey "${API_KEY:-}" \
     '{
         attemptId: $attemptId,
@@ -56,7 +59,7 @@ payload=$(jq -n \
         connectionFields: (if $apiKey != "" then {apiKey: $apiKey} else null end)
     }')
 
-http_code=$(curl -s -o /tmp/salt-resp.txt -w '%{http_code}' \
+http_code=$(curl -s -o "$RESP_FILE" -w '%{http_code}' \
     --max-time 15 \
     -X POST \
     -H "Authorization: ${AUTH_HEADER}" \
@@ -70,7 +73,7 @@ if [[ "$http_code" =~ ^2 ]]; then
 fi
 
 echo "ERROR: Salt backend returned HTTP ${http_code} for ${DEPLOYMENT_STATUS}" >&2
-if [ -s /tmp/salt-resp.txt ]; then
-    echo "Response: $(head -c 500 /tmp/salt-resp.txt)" >&2
+if [ -s "$RESP_FILE" ]; then
+    echo "Response: $(head -c 500 "$RESP_FILE")" >&2
 fi
 exit 1
