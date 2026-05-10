@@ -36,9 +36,11 @@ resource "null_resource" "manual_deploy_validation" {
 # ============================================================================
 # Manual-deploy: POST "Initiated" before any IAM resources are created.
 #
-# Runs first so the Salt backend registers the attempt even if subsequent IAM
-# creation fails. IAM resources depend on this null_resource to enforce
-# ordering.
+# Runs first so the Salt backend acknowledges the attempt before any IAM is
+# created. post_status.sh exits non-zero on a non-2xx response, so if the
+# backend is unreachable the apply aborts before creating any resources —
+# preventing the worse outcome of IAM that Salt doesn't know about.
+# IAM resources depend on this null_resource to enforce ordering.
 # ============================================================================
 resource "null_resource" "post_initiated" {
   count = var.manual_deploy ? 1 : 0

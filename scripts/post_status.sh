@@ -12,10 +12,10 @@
 # Optional (forwarded only if set):
 #   INSTALLATION_ID, STACK_ID, ACCOUNT_ID, SERVICE_ID, API_KEY
 #
-# Best-effort: a non-2xx response is logged but does NOT fail the apply.
-# Rationale: once IAM resources exist, failing the apply on a transient
-# network blip would leave orphaned resources the customer would have to
-# clean up manually. The Salt backend can be reconciled out-of-band.
+# Fails the apply on non-2xx. The module only creates a handful of IAM
+# resources, so the cost of aborting on a transient backend blip is low
+# (retry is cheap), and it prevents the worse outcome: IAM resources
+# existing without the Salt backend knowing about them.
 
 set -u
 set -o pipefail
@@ -31,7 +31,7 @@ AUTH_HEADER="Bearer ${SALT_AUTH_TOKEN#Bearer }"
 for cmd in jq curl; do
     command -v "$cmd" >/dev/null 2>&1 || {
         echo "post_status.sh: required command not found: $cmd" >&2
-        exit 0  # best-effort: don't fail apply
+        exit 1
     }
 done
 
@@ -64,8 +64,11 @@ http_code=$(curl -s -o /tmp/salt-resp.txt -w '%{http_code}' \
 
 if [[ "$http_code" =~ ^2 ]]; then
     echo "Salt backend: ${DEPLOYMENT_STATUS} (HTTP ${http_code})"
-else
-    echo "WARN: Salt backend returned HTTP ${http_code} for ${DEPLOYMENT_STATUS} (continuing)" >&2
+    exit 0
 fi
 
-exit 0
+echo "ERROR: Salt backend returned HTTP ${http_code} for ${DEPLOYMENT_STATUS}" >&2
+if [ -s /tmp/salt-resp.txt ]; then
+    echo "Response: $(head -c 500 /tmp/salt-resp.txt)" >&2
+fi
+exit 1
