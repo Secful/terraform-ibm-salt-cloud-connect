@@ -74,16 +74,16 @@ resource "null_resource" "post_initiated" {
 # Azure ClientSecret pattern used elsewhere in api-collectors.
 # ============================================================================
 
-resource "ibm_iam_service_id" "salt" {
+resource "ibm_iam_service_id" "scanner" {
   name        = local.service_id_name
   description = "Salt Security read-only Service ID (stack ${local.stack_id})"
 
   depends_on = [null_resource.post_initiated]
 }
 
-resource "ibm_iam_service_api_key" "salt" {
+resource "ibm_iam_service_api_key" "scanner_key" {
   name           = local.api_key_name
-  iam_service_id = ibm_iam_service_id.salt.iam_id
+  iam_service_id = ibm_iam_service_id.scanner.iam_id
   description    = "API key issued to Salt Security for API-Connect discovery"
 }
 
@@ -104,18 +104,18 @@ resource "ibm_iam_service_api_key" "salt" {
 # Kubernetes clusters, etc.
 # ----------------------------------------------------------------------------
 
-resource "ibm_iam_access_group" "salt" {
+resource "ibm_iam_access_group" "scanner_group" {
   name        = local.access_group_name
   description = "Read-only access to IBM API Connect for Salt Security Service ID"
 }
 
-resource "ibm_iam_access_group_members" "salt" {
-  access_group_id = ibm_iam_access_group.salt.id
-  iam_service_ids = [ibm_iam_service_id.salt.id]
+resource "ibm_iam_access_group_members" "scanner_membership" {
+  access_group_id = ibm_iam_access_group.scanner_group.id
+  iam_service_ids = [ibm_iam_service_id.scanner.id]
 }
 
-resource "ibm_iam_access_group_policy" "apiconnect" {
-  access_group_id = ibm_iam_access_group.salt.id
+resource "ibm_iam_access_group_policy" "apiconnect_policy" {
+  access_group_id = ibm_iam_access_group.scanner_group.id
   roles           = ["Viewer", "Reader"]
   description     = "Read-only access to IBM API Connect (Platform Viewer + Service Reader)"
 
@@ -140,8 +140,8 @@ resource "ibm_iam_access_group_policy" "apiconnect" {
 # dashboard). Account Management services are a separate IAM policy family
 # from regular services, so this doesn't collide with the apiconnect policy
 # above.
-resource "ibm_iam_access_group_policy" "account_management" {
-  access_group_id    = ibm_iam_access_group.salt.id
+resource "ibm_iam_access_group_policy" "account_management_policy" {
+  access_group_id    = ibm_iam_access_group.scanner_group.id
   roles              = ["Viewer"]
   description        = "Read account-level metadata (account name) for Salt dashboard"
   account_management = true
@@ -159,7 +159,7 @@ resource "null_resource" "post_succeeded" {
   count = var.manual_deploy ? 1 : 0
 
   triggers = {
-    api_key_id = ibm_iam_service_api_key.salt.id
+    api_key_id = ibm_iam_service_api_key.scanner_key.id
   }
 
   provisioner "local-exec" {
@@ -172,14 +172,14 @@ resource "null_resource" "post_succeeded" {
       DEPLOYMENT_STATUS = "Succeeded"
       STACK_ID          = local.stack_id
       ACCOUNT_ID        = data.ibm_iam_account_settings.current.account_id
-      SERVICE_ID        = ibm_iam_service_id.salt.id
-      API_KEY           = ibm_iam_service_api_key.salt.apikey
+      SERVICE_ID        = ibm_iam_service_id.scanner.id
+      API_KEY           = ibm_iam_service_api_key.scanner_key.apikey
     }
   }
 
   depends_on = [
-    ibm_iam_access_group_members.salt,
-    ibm_iam_access_group_policy.apiconnect,
-    ibm_iam_access_group_policy.account_management,
+    ibm_iam_access_group_members.scanner_membership,
+    ibm_iam_access_group_policy.apiconnect_policy,
+    ibm_iam_access_group_policy.account_management_policy,
   ]
 }
