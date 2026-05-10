@@ -10,26 +10,26 @@ output "account_id" {
 
 output "service_id" {
   description = "IBM IAM Service ID (id form, e.g. ServiceId-xxx) created for Salt Security."
-  value       = ibm_iam_service_id.scanner.id
+  value       = ibm_iam_service_id.salt_service_id.id
 }
 
 output "service_id_iam_id" {
   description = "IAM ID of the Service ID (iam-ServiceId-xxx form)."
-  value       = ibm_iam_service_id.scanner.iam_id
+  value       = ibm_iam_service_id.salt_service_id.iam_id
 }
 
 output "api_key_id" {
   description = "IBM IAM API key ID bound to the Service ID."
-  value       = ibm_iam_service_api_key.scanner_key.id
+  value       = ibm_iam_service_api_key.salt_api_key.id
 }
 
 output "api_key" {
   description = "The Service ID API key. Sensitive: consume via `terraform output -raw api_key`; never log."
-  value       = ibm_iam_service_api_key.scanner_key.apikey
+  value       = ibm_iam_service_api_key.salt_api_key.apikey
   sensitive   = true
 }
 
 output "access_group_id" {
   description = "Access group containing the Service ID."
-  value       = ibm_iam_access_group.scanner_group.id
+  value       = ibm_iam_access_group.salt_access_group.id
 }

@@ -76,7 +76,7 @@ resource "null_resource" "post_initiated" {
 # Azure ClientSecret pattern used elsewhere in api-collectors.
 # ============================================================================
 
-resource "ibm_iam_service_id" "scanner" {
+resource "ibm_iam_service_id" "salt_service_id" {
   name        = local.service_id_name
   description = "Salt Security read-only Service ID (stack ${local.stack_id})"
 
@@ -90,13 +90,13 @@ resource "ibm_iam_service_id" "scanner" {
 # it. A short sleep here (~10s, per the ibm-cloud/ibm provider's known
 # issues) is the community-recommended workaround.
 resource "time_sleep" "wait_for_service_id" {
-  depends_on      = [ibm_iam_service_id.scanner]
+  depends_on      = [ibm_iam_service_id.salt_service_id]
   create_duration = "10s"
 }
 
-resource "ibm_iam_service_api_key" "scanner_key" {
+resource "ibm_iam_service_api_key" "salt_api_key" {
   name           = local.api_key_name
-  iam_service_id = ibm_iam_service_id.scanner.iam_id
+  iam_service_id = ibm_iam_service_id.salt_service_id.iam_id
   description    = "API key issued to Salt Security for API-Connect discovery"
 
   depends_on = [time_sleep.wait_for_service_id]
@@ -119,22 +119,22 @@ resource "ibm_iam_service_api_key" "scanner_key" {
 # Kubernetes clusters, etc.
 # ----------------------------------------------------------------------------
 
-resource "ibm_iam_access_group" "scanner_group" {
+resource "ibm_iam_access_group" "salt_access_group" {
   name        = local.access_group_name
   description = "Read-only access to IBM API Connect for Salt Security Service ID"
 }
 
-resource "ibm_iam_access_group_members" "scanner_membership" {
-  access_group_id = ibm_iam_access_group.scanner_group.id
-  iam_service_ids = [ibm_iam_service_id.scanner.id]
+resource "ibm_iam_access_group_members" "salt_access_group_membership" {
+  access_group_id = ibm_iam_access_group.salt_access_group.id
+  iam_service_ids = [ibm_iam_service_id.salt_service_id.id]
 
   # Same propagation race as the API key: the Service ID must be visible
   # to IAM before it can be added to an access group.
   depends_on = [time_sleep.wait_for_service_id]
 }
 
-resource "ibm_iam_access_group_policy" "apiconnect_policy" {
-  access_group_id = ibm_iam_access_group.scanner_group.id
+resource "ibm_iam_access_group_policy" "salt_apiconnect_policy" {
+  access_group_id = ibm_iam_access_group.salt_access_group.id
   roles           = ["Viewer", "Reader"]
   description     = "Read-only access to IBM API Connect (Platform Viewer + Service Reader)"
 
@@ -159,8 +159,8 @@ resource "ibm_iam_access_group_policy" "apiconnect_policy" {
 # dashboard). Account Management services are a separate IAM policy family
 # from regular services, so this doesn't collide with the apiconnect policy
 # above.
-resource "ibm_iam_access_group_policy" "account_management_policy" {
-  access_group_id    = ibm_iam_access_group.scanner_group.id
+resource "ibm_iam_access_group_policy" "salt_account_management_policy" {
+  access_group_id    = ibm_iam_access_group.salt_access_group.id
   roles              = ["Viewer"]
   description        = "Read account-level metadata (account name) for Salt dashboard"
   account_management = true
@@ -178,7 +178,7 @@ resource "null_resource" "post_succeeded" {
   count = var.manual_deploy ? 1 : 0
 
   triggers = {
-    api_key_id = ibm_iam_service_api_key.scanner_key.id
+    api_key_id = ibm_iam_service_api_key.salt_api_key.id
   }
 
   provisioner "local-exec" {
@@ -191,14 +191,14 @@ resource "null_resource" "post_succeeded" {
       DEPLOYMENT_STATUS = "Succeeded"
       STACK_ID          = local.stack_id
       ACCOUNT_ID        = data.ibm_iam_account_settings.current.account_id
-      SERVICE_ID        = ibm_iam_service_id.scanner.id
-      API_KEY           = ibm_iam_service_api_key.scanner_key.apikey
+      SERVICE_ID        = ibm_iam_service_id.salt_service_id.id
+      API_KEY           = ibm_iam_service_api_key.salt_api_key.apikey
     }
   }
 
   depends_on = [
-    ibm_iam_access_group_members.scanner_membership,
-    ibm_iam_access_group_policy.apiconnect_policy,
-    ibm_iam_access_group_policy.account_management_policy,
+    ibm_iam_access_group_members.salt_access_group_membership,
+    ibm_iam_access_group_policy.salt_apiconnect_policy,
+    ibm_iam_access_group_policy.salt_account_management_policy,
   ]
 }
