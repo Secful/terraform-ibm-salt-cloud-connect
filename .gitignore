@@ -1,3 +1,4 @@
-# Runtime artifact written by scripts/post_credentials.sh and consumed by
-# data.local_file.post_result in main.tf. Not meant to be committed.
-.deployment_status
+# Terraform provider cache / local state
+.terraform/
+*.tfstate
+*.tfstate.*

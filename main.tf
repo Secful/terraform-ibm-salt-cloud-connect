@@ -1,28 +1,67 @@
 locals {
-  stack_id_provided   = length(trimspace(var.stack_id)) > 0
-  attempt_id_provided = length(trimspace(var.attempt_id)) > 0
-
-  stack_id   = local.stack_id_provided ? var.stack_id : substr(random_id.stack[0].hex, 0, 8)
-  attempt_id = local.attempt_id_provided ? var.attempt_id : random_uuid.attempt[0].result
+  stack_id = substr(random_id.stack.hex, 0, 8)
 
   service_id_name   = "salt-security-sid-${local.stack_id}"
   api_key_name      = "salt-security-key-${local.stack_id}"
   access_group_name = "salt-security-ag-${local.stack_id}"
 }
 
-# ----------------------------------------------------------------------------
-# Stack ID / attempt ID generation (when not supplied by caller)
-# ----------------------------------------------------------------------------
 resource "random_id" "stack" {
-  count       = local.stack_id_provided ? 0 : 1
   byte_length = 4
 }
 
-resource "random_uuid" "attempt" {
-  count = local.attempt_id_provided ? 0 : 1
+data "ibm_iam_account_settings" "current" {}
+
+# ============================================================================
+# Manual-deploy validation
+#
+# When manual_deploy is false, an external orchestrator (the Cloud Shell
+# script) POSTs to the Salt backend. Leave the salt_* variables unset.
+#
+# When manual_deploy is true, Terraform POSTs from inside `apply` itself via
+# the null_resources below, so salt_host / salt_auth_token / attempt_id must
+# all be non-empty.
+# ============================================================================
+resource "null_resource" "manual_deploy_validation" {
+  count = var.manual_deploy ? 1 : 0
+
+  lifecycle {
+    precondition {
+      condition     = !var.manual_deploy || (var.salt_host != "" && var.salt_auth_token != "" && var.attempt_id != "")
+      error_message = "manual_deploy = true requires salt_host, salt_auth_token, and attempt_id to be set."
+    }
+  }
 }
 
-data "ibm_iam_account_settings" "current" {}
+# ============================================================================
+# Manual-deploy: POST "Initiated" before any IAM resources are created.
+#
+# Runs first so the Salt backend acknowledges the attempt before any IAM is
+# created. post_status.sh exits non-zero on a non-2xx response, so if the
+# backend is unreachable the apply aborts before creating any resources —
+# preventing the worse outcome of IAM that Salt doesn't know about.
+# IAM resources depend on this null_resource to enforce ordering.
+# ============================================================================
+resource "null_resource" "post_initiated" {
+  count = var.manual_deploy ? 1 : 0
+
+  triggers = {
+    attempt_id = var.attempt_id
+  }
+
+  provisioner "local-exec" {
+    command = "${path.module}/scripts/post_status.sh"
+    environment = {
+      SALT_HOST         = var.salt_host
+      SALT_AUTH_TOKEN   = var.salt_auth_token
+      ATTEMPT_ID        = var.attempt_id
+      INSTALLATION_ID   = var.installation_id
+      DEPLOYMENT_STATUS = "Initiated"
+    }
+  }
+
+  depends_on = [null_resource.manual_deploy_validation]
+}
 
 # ============================================================================
 # IAM Service ID + API key
@@ -37,27 +76,36 @@ data "ibm_iam_account_settings" "current" {}
 # Azure ClientSecret pattern used elsewhere in api-collectors.
 # ============================================================================
 
-resource "ibm_iam_service_id" "salt" {
+resource "ibm_iam_service_id" "salt_service_id" {
   name        = local.service_id_name
   description = "Salt Security read-only Service ID (stack ${local.stack_id})"
+
+  depends_on = [null_resource.post_initiated]
 }
 
-resource "ibm_iam_service_api_key" "salt" {
+# IBM IAM is eventually consistent: creating an API key against a freshly
+# created Service ID can fail with "Unable to find object" because the
+# Service ID hasn't propagated yet. Terraform's implicit dependency only
+# waits for the Service ID to be in state, not for IAM to finish replicating
+# it. A short sleep here (~10s, per the ibm-cloud/ibm provider's known
+# issues) is the community-recommended workaround.
+resource "time_sleep" "wait_for_service_id" {
+  depends_on      = [ibm_iam_service_id.salt_service_id]
+  create_duration = "10s"
+}
+
+resource "ibm_iam_service_api_key" "salt_api_key" {
   name           = local.api_key_name
-  iam_service_id = ibm_iam_service_id.salt.iam_id
+  iam_service_id = ibm_iam_service_id.salt_service_id.iam_id
   description    = "API key issued to Salt Security for API-Connect discovery"
-  store_value    = false
+
+  depends_on = [time_sleep.wait_for_service_id]
 }
 
 # ----------------------------------------------------------------------------
 # Access group with least-privilege policies scoped to IBM API Connect only.
 # Permissions live on the group (not the Service ID directly) so they can be
 # updated without re-issuing the key.
-#
-# Scope matches the AWS-side precedent in
-# cloud-connect-deployments/aws/manual-setup/discovery-policy.json, which
-# grants apigateway:GET on Resource:* — i.e., read-only on exactly one
-# service, nothing else.
 #
 # Two policies are required (dropping either breaks the scan):
 #   1. Platform Viewer — lets the Service ID see the API Connect instance
@@ -71,20 +119,31 @@ resource "ibm_iam_service_api_key" "salt" {
 # Kubernetes clusters, etc.
 # ----------------------------------------------------------------------------
 
-resource "ibm_iam_access_group" "salt" {
+resource "ibm_iam_access_group" "salt_access_group" {
   name        = local.access_group_name
   description = "Read-only access to IBM API Connect for Salt Security Service ID"
+
+  # The access group is in a parallel dependency branch from the Service ID,
+  # so without this explicit block Terraform starts creating it (and the
+  # policies below) concurrently with the Initiated POST — defeating the
+  # "nothing exists unless Salt acknowledged the attempt" guarantee.
+  depends_on = [null_resource.post_initiated]
 }
 
-resource "ibm_iam_access_group_members" "salt" {
-  access_group_id = ibm_iam_access_group.salt.id
-  iam_service_ids = [ibm_iam_service_id.salt.id]
+resource "ibm_iam_access_group_members" "salt_access_group_membership" {
+  access_group_id = ibm_iam_access_group.salt_access_group.id
+  iam_service_ids = [ibm_iam_service_id.salt_service_id.id]
+
+  # Same propagation race as the API key: the Service ID must be visible
+  # to IAM before it can be added to an access group.
+  depends_on = [time_sleep.wait_for_service_id]
 }
 
-resource "ibm_iam_access_group_policy" "apiconnect" {
-  access_group_id = ibm_iam_access_group.salt.id
+resource "ibm_iam_access_group_policy" "salt_apiconnect_policy" {
+  access_group_id = ibm_iam_access_group.salt_access_group.id
   roles           = ["Viewer", "Reader"]
   description     = "Read-only access to IBM API Connect (Platform Viewer + Service Reader)"
+
 
   # NOTE 1: accountId is injected automatically by the IBM provider from the
   # authenticated session — adding it explicitly causes "invalid_body: The
@@ -102,47 +161,51 @@ resource "ibm_iam_access_group_policy" "apiconnect" {
   }
 }
 
-# ----------------------------------------------------------------------------
-# Send the freshly-minted API key to the Salt backend.
+# Account Management → Viewer: lets the Service ID read account-level
+# metadata (most importantly, the account name/alias displayed in the Salt
+# dashboard). Account Management services are a separate IAM policy family
+# from regular services, so this doesn't collide with the apiconnect policy
+# above.
+resource "ibm_iam_access_group_policy" "salt_account_management_policy" {
+  access_group_id    = ibm_iam_access_group.salt_access_group.id
+  roles              = ["Viewer"]
+  description        = "Read account-level metadata (account name) for Salt dashboard"
+  account_management = true
+}
+
+# ============================================================================
+# Manual-deploy: POST "Succeeded" after all IAM resources are ready.
 #
-# We use a null_resource + local-exec so the key payload never lands in
-# Terraform outputs or the Schematics state viewer. The script writes the
-# backend response to a file which we read back via data.local_file for the
-# deployment_status output.
-# ----------------------------------------------------------------------------
-resource "null_resource" "post_credentials" {
+# Runs last (depends on every IAM resource) so the API key, access group, and
+# both policies are confirmed created before we tell Salt the onboarding is
+# done. The script receives the stack_id, account_id, service_id, and api_key
+# via env vars and forwards them in connectionFields.
+# ============================================================================
+resource "null_resource" "post_succeeded" {
+  count = var.manual_deploy ? 1 : 0
+
   triggers = {
-    stack_id   = local.stack_id
-    attempt_id = local.attempt_id
-    service_id = ibm_iam_service_id.salt.id
-    api_key_id = ibm_iam_service_api_key.salt.id
+    api_key_id = ibm_iam_service_api_key.salt_api_key.id
   }
 
   provisioner "local-exec" {
-    command     = "${path.module}/scripts/post_credentials.sh"
-    interpreter = ["bash", "-c"]
-
+    command = "${path.module}/scripts/post_status.sh"
     environment = {
-      SALT_HOST       = var.salt_host
-      SALT_AUTH_TOKEN = var.salt_auth_token
-      STACK_ID        = local.stack_id
-      ATTEMPT_ID      = local.attempt_id
-      INSTALLATION_ID = var.installation_id
-      CREATED_BY      = var.created_by
-      ACCOUNT_ID      = data.ibm_iam_account_settings.current.account_id
-      IBM_API_KEY     = ibm_iam_service_api_key.salt.apikey
-      STATUS_FILE     = "${path.module}/.deployment_status"
+      SALT_HOST         = var.salt_host
+      SALT_AUTH_TOKEN   = var.salt_auth_token
+      ATTEMPT_ID        = var.attempt_id
+      INSTALLATION_ID   = var.installation_id
+      DEPLOYMENT_STATUS = "Succeeded"
+      STACK_ID          = local.stack_id
+      ACCOUNT_ID        = data.ibm_iam_account_settings.current.account_id
+      SERVICE_ID        = ibm_iam_service_id.salt_service_id.id
+      API_KEY           = ibm_iam_service_api_key.salt_api_key.apikey
     }
   }
 
   depends_on = [
-    ibm_iam_access_group_policy.apiconnect,
-    ibm_iam_access_group_members.salt,
+    ibm_iam_access_group_members.salt_access_group_membership,
+    ibm_iam_access_group_policy.salt_apiconnect_policy,
+    ibm_iam_access_group_policy.salt_account_management_policy,
   ]
-}
-
-data "local_file" "post_result" {
-  filename = "${path.module}/.deployment_status"
-
-  depends_on = [null_resource.post_credentials]
 }

@@ -1,165 +1,148 @@
-# IBM Cloud Schematics — Salt Security Cloud Connect
+# terraform-ibm-salt-cloud-connect
 
-Terraform module for giving Salt Security read-only access to IBM Cloud API
-Connect resources in your account, deployable through the IBM Cloud console
-(IBM Schematics) or locally.
+Terraform module that creates the IBM Cloud IAM resources Salt Security's
+scanner needs to read your API Connect metadata.
 
-Salt authenticates to IBM Cloud using a rotatable **IAM Service ID API key**
-bound to an access group with read-only policies.
+Two ways to drive it:
 
-This workspace creates:
+- **Default (`manual_deploy = false`)** — pure declarative IAM provisioning,
+  no network calls. An external orchestrator (Salt's onboarding flow, or
+  `ibm/single_account/ibm-connect-onboard.sh` in the parent repo) reads the
+  outputs and POSTs them to the Salt backend.
+- **Manual Schematics (`manual_deploy = true`)** — opt-in for customers
+  applying from the Schematics UI without the orchestrator. Terraform
+  itself POSTs Initiated/Succeeded to the Salt backend via `null_resource`
+  + `local-exec`. Requires `salt_host`, `salt_auth_token`, `attempt_id`.
 
-1. An IAM **Service ID** owned by Salt
-2. An **API key** bound to the Service ID (posted to Salt, not exposed in
-   Terraform outputs)
-3. An **access group** with **Platform Viewer + Service Reader** policies on
-   every resource in the account (read-only)
-4. Posts the API key to your Salt Security backend
+## What it creates
 
----
+| Resource                       | Name                                  | Scope                    |
+| ------------------------------ | ------------------------------------- | ------------------------ |
+| `ibm_iam_service_id`           | `salt-security-sid-<stack_id>`        | —                        |
+| `ibm_iam_service_api_key`      | `salt-security-key-<stack_id>`        | —                        |
+| `ibm_iam_access_group`         | `salt-security-ag-<stack_id>`         | —                        |
+| `ibm_iam_access_group_members` | Service ID → access group             | —                        |
+| `ibm_iam_access_group_policy`  | Viewer + Reader                       | `serviceName=apiconnect` |
+| `ibm_iam_access_group_policy`  | Viewer                                | Account Management       |
 
-## Deploy via IBM Schematics (console)
+`stack_id` is an auto-generated 8-char hex suffix.
 
-The Schematics "Create workspace" page accepts query-string parameters that
-pre-fill repository info **and** any Terraform input variable via
-`tf_var_<name>=<value>`. Salt's onboarding flow should generate a per-customer
-link like this:
+## Inputs
 
-```
-https://cloud.ibm.com/schematics/workspaces/create
-  ?repository=https://github.com/Secful/terraform-ibm-salt-cloud-connect
-  &terraform_version=terraform_v1.9
-  &tf_var_salt_host=https%3A%2F%2Fapi.salt.security
-  &tf_var_salt_auth_token=<token>
-  &tf_var_installation_id=11111111-2222-3333-4444-555555555555
-  &tf_var_attempt_id=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
-```
+By default the module is **self-contained** — no variables need to be set. An
+external orchestrator (e.g. `ibm/single_account/ibm-connect-onboard.sh` in the
+parent repo) reads the outputs and POSTs them to the Salt backend.
 
-Customer steps once they click the link:
+### Manual deploy (`manual_deploy = true`)
 
-1. IBM Cloud sign-in (if not already signed in) → lands on the Schematics
-   Create form with all variables pre-filled.
-2. Click **Create** → **Generate plan** → **Apply plan**.
+For customers applying from the Schematics UI **without** the Cloud Shell
+orchestrator, set `manual_deploy = true` and Terraform will POST the Initiated
+(before IAM creation) and Succeeded (after) statuses to the Salt backend
+itself via `null_resource` + `local-exec`.
 
-Apply takes ~60 seconds. When the workspace flips to "Active" the Service ID
-exists and Salt has received the API key.
+| Variable           | Required in manual mode | Description                                           |
+| ------------------ | ----------------------- | ----------------------------------------------------- |
+| `manual_deploy`    | —                       | Set `true` to have Terraform POST statuses itself     |
+| `salt_host`        | ✅                       | Salt backend URL (e.g. `https://api.salt.security`)   |
+| `salt_auth_token`  | ✅                       | Bearer token from the Salt dashboard (sensitive)      |
+| `attempt_id`       | ✅                       | Onboarding attempt UUID from the Salt backend         |
+| `installation_id`  |                         | Salt tenant/installation UUID                         |
 
-### Which variables to pre-fill in the URL
+A precondition enforces the required fields at plan time if `manual_deploy =
+true`.
 
-| Variable          | Pre-fill via URL?     | Notes                                           |
-| ----------------- | --------------------- | ----------------------------------------------- |
-| `salt_host`       | ✅ Yes                | Public, same value per Salt environment         |
-| `salt_auth_token` | ✅ Yes (per customer) | Short-lived onboarding token issued by Salt     |
-| `installation_id` | ✅ Yes (per customer) | Salt tenant/installation UUID                   |
-| `attempt_id`      | ✅ Yes (per attempt)  | Onboarding attempt UUID generated by Salt       |
-| `stack_id`        | Optional              | Auto-generated if empty — usually leave blank   |
-| `created_by`      | Optional              | Defaults to `IBM Schematics`                    |
-| `ibm_region`      | Optional              | Defaults to `us-south`                          |
+> **Note on Schematics behavior:** Schematics runs Terraform in a sandboxed
+> container and rewrites every `local-exec` provisioner to `safe-local-exec`
+> in its apply logs. The `local-exec` in this module's `main.tf` is the same
+> thing — Schematics is just labelling it for transparency.
 
-Mirrors the equivalent CloudFormation quick-create flow on AWS, which also
-passes `SaltAuthToken` as a URL parameter. The token is marked
-`sensitive` in Terraform and `NoEcho` in the underlying backend contract,
-so it does not appear in Schematics plan/apply UI logs or workspace state
-viewers after creation.
+## Outputs
 
----
+| Output              | Sensitive | Description                                              |
+| ------------------- | --------- | -------------------------------------------------------- |
+| `stack_id`          |           | 8-char hex namespace for this deployment                 |
+| `account_id`        |           | IBM Cloud account ID                                     |
+| `service_id`        |           | `ServiceId-<uuid>`                                       |
+| `service_id_iam_id` |           | `iam-ServiceId-<uuid>` (the IAM identity form)           |
+| `api_key_id`        |           | `ApiKey-<uuid>`                                          |
+| `api_key`           | ✅        | The API key value — consume via `terraform output -raw api_key` |
+| `access_group_id`   |           | `AccessGroupId-<uuid>`                                   |
 
-## Variables
+## Security considerations
 
-| Variable          | Required | Default    | Description                                                             |
-| ----------------- | -------- | ---------- | ----------------------------------------------------------------------- |
-| `salt_host`       | ✅       | —          | Salt backend base URL, e.g. `https://api.salt.security`                 |
-| `salt_auth_token` | ✅       | —          | Bearer token for the Salt backend (sensitive)                           |
-| `stack_id`        |          | auto       | 8-char hex used to namespace resources. Auto-generated if omitted       |
-| `installation_id` |          | `""`              | Salt installation/tenant UUID, forwarded to the backend                 |
-| `attempt_id`      |          | auto              | Onboarding attempt UUID from the Salt backend. Auto-generated if empty  |
-| `created_by`      |          | `IBM Schematics`  | Free-form audit string forwarded to the backend as `createdBy`          |
-| `ibm_region`      |          | `us-south`        | IBM region for provider API calls (IAM is global)                       |
+- **`salt_auth_token` lives in Terraform state.** When `manual_deploy = true`
+  the token is passed to a `local-exec` provisioner, which means it's
+  recorded in `terraform.tfstate`. For Schematics deployments the state is
+  encrypted at rest, but anyone with workspace read access can retrieve
+  it. Treat the token like any other secret.
+- **`api_key` is displayed in plaintext on the Schematics Outputs tab.**
+  Marking an output `sensitive = true` hides it from the Terraform CLI, but
+  Schematics' UI shows it anyway. **Do not grant workspace viewer access to
+  anyone you wouldn't give the API key to.** If you need to share workspace
+  access with other IAM identities, consider running `terraform destroy`
+  and re-deploying after the collaboration ends.
+- **Minimum-trust scope by design** — see [Least-privilege scope](#least-privilege-scope).
 
----
+## Region
 
-## What gets created
+IBM IAM is account-scoped (global), not regional. The Service ID, API key,
+access group, and policies this module creates apply **across every IBM
+region** where the customer has API Connect instances — no per-region
+deployment needed. The region the Schematics workspace runs in is cosmetic
+(metadata/billing-locality only).
 
-| Resource                       | Name                                    | Scope                    |
-| ------------------------------ | --------------------------------------- | ------------------------ |
-| `ibm_iam_service_id`           | `salt-security-sid-<stack_id>`          | —                        |
-| `ibm_iam_service_api_key`      | `salt-security-key-<stack_id>`          | —                        |
-| `ibm_iam_access_group`         | `salt-security-ag-<stack_id>`           | —                        |
-| `ibm_iam_access_group_members` | Service ID → access group               | —                        |
-| `ibm_iam_access_group_policy`  | Viewer + Reader combined (see note)     | `serviceName=apiconnect` |
+## Least-privilege scope
 
-### Least-privilege scope
-
-The access group grants **read-only access to IBM API Connect and nothing
-else**. Both policies are constrained to `serviceName=apiconnect`, so the
-Service ID cannot read:
+The access group grants **read-only access to IBM API Connect, plus
+read-only visibility of account-level metadata (account name) — and nothing
+else**. The Service ID cannot read:
 
 - IAM users, Service IDs, access groups, policies
 - Cloud Object Storage buckets or objects
 - Kubernetes (IKS/ROKS) clusters, secrets, or workloads
 - VPC networking, Virtual Servers, or any other IBM service
 
-This mirrors the least-privilege approach Salt uses on other clouds —
-read-only on exactly the one service being scanned, nothing else.
+The apiconnect policy combines two roles because IBM IAM splits
+responsibilities: Platform Viewer lets the Service ID see that the API
+Connect instance exists (needed to traverse the provider-orgs → catalogs →
+spaces → APIs hierarchy), and Service Reader lets it call the API Connect
+management APIs to export OpenAPI specs.
 
-Two policies are required because IBM IAM splits responsibilities: Platform
-Viewer lets the Service ID see that the API Connect instance exists (needed
-to traverse the provider-orgs → catalogs → spaces → APIs hierarchy), and
-Service Reader lets it call the API Connect management APIs to export
-OpenAPI specs.
-
----
+The Account Management Viewer policy is a separate IAM policy family and
+exists so Salt's dashboard can display the customer's IBM account name
+alongside scan results.
 
 ## Prerequisites
 
-- IBM Cloud account (Pay-As-You-Go or higher — the Lite tier cannot create
-  Service IDs)
-- IBM Cloud user with **IAM Identity Service → Administrator** and
-  **access-group admin** permissions in the target account
-- Salt Security backend URL and bearer token (provided at onboarding)
+### IBM Cloud account
 
----
+- Pay-As-You-Go or higher — the Lite tier cannot create Service IDs.
 
-## Security notes
+### IAM permissions the caller needs
 
-- `salt_auth_token` and the generated IBM API key are both marked `sensitive`
-  in Terraform — they will not appear in Schematics plan/apply UI logs
-- The API key is posted to the Salt backend via `null_resource + local-exec`
-  and is never written to Terraform outputs or state as a readable value
-  (`store_value = false` on the IBM API key resource)
-- All IAM policies are read-only. No `create`, `update`, `delete`, or `set`
-  permissions are granted
-- Policies are scoped to `serviceName=apiconnect` — the Service ID cannot
-  read any IBM resource outside API Connect (see "Least-privilege scope"
-  above)
-- The Service ID is scoped to *your* account via
-  `data.ibm_iam_account_settings.current.account_id` — no cross-account access
+The user (or Service ID) running `terraform apply` must have permission to
+create, read, and delete the resources this module manages. The simplest
+grant is the **Administrator** role on the following platform services at
+the account scope:
 
-### Rotation
+| Service / scope                        | Role            | Why                                         |
+| -------------------------------------- | --------------- | ------------------------------------------- |
+| IAM Identity Service                   | Administrator   | Create/delete the Service ID and API key    |
+| IAM Access Groups Service              | Administrator   | Create/delete the access group + policies   |
+| All Account Management Services        | Administrator   | Assign the Account Management Viewer policy |
+| All Identity and Access enabled services | Viewer       | `data.ibm_iam_account_settings` read        |
 
-To rotate the API key: destroy and re-apply the workspace, or manually
-generate a new API key on the existing Service ID (IBM Cloud console →
-Service IDs → *salt-security-sid-xxx* → API keys) and paste it into the
-Salt dashboard. Automated rotation is tracked as a Phase 2 improvement.
+A narrower (but harder to specify) alternative is the Account Owner IBMid,
+which implicitly has all of the above.
 
----
+### CLI / tooling
 
-## Cleanup
+- `terraform` ≥ 1.9.0 (for local use)
+- `ibmcloud` CLI (for Schematics use — pre-installed in IBM Cloud Shell)
+- `IC_API_KEY` env var set (for local dev) or a Schematics workspace
+  with credentials configured
 
-Destroy the workspace from the Schematics console (Actions → Destroy
-resources) or locally:
-
-```sh
-terraform destroy
-```
-
-This removes the Service ID, API key, access group, and policies. It does
-**not** deregister the connector from Salt — use the Salt Security dashboard
-for that.
-
----
-
-## Development
+## Local use
 
 ```sh
 export IC_API_KEY='your-ibm-cloud-api-key'
@@ -167,17 +150,69 @@ export IC_API_KEY='your-ibm-cloud-api-key'
 terraform init
 terraform fmt -check
 terraform validate
-terraform plan \
-  -var='salt_host=https://api.salt.security' \
-  -var='salt_auth_token=...'
+terraform apply
+
+# Hand the API key to your orchestration:
+terraform output -raw api_key
 ```
 
-The module is designed to be consumed directly by Schematics (no state
-backend config needed — Schematics manages state). Local development against
-your own IBM account works the same way with an `IC_API_KEY` env var for the
-`ibm` provider.
+See [`examples/basic`](examples/basic) and
+[`examples/manual-deploy`](examples/manual-deploy) for copy-paste templates.
 
----
+## Schematics use
+
+Create a Schematics workspace pointing at this repo:
+
+```
+Repository URL:     https://github.com/Secful/terraform-ibm-salt-cloud-connect
+Terraform version:  terraform_v1.13
+```
+
+### When the Cloud Shell orchestrator drives the apply
+
+Leave all variables unset. The orchestrator reads the outputs after apply and
+POSTs them to Salt. API key is available on the **Resources → Outputs** tab,
+or via:
+
+```sh
+ibmcloud schematics output --id <workspace_id> --output JSON
+```
+
+### When the customer applies directly from the Schematics UI
+
+Set the following variables in the workspace:
+
+| Variable          | Value                                               |
+| ----------------- | --------------------------------------------------- |
+| `manual_deploy`   | `true`                                              |
+| `salt_host`       | Salt backend URL (from Salt dashboard)              |
+| `salt_auth_token` | Bearer token (paste into the Schematics form)       |
+| `attempt_id`      | Onboarding attempt UUID (from Salt dashboard)       |
+
+Apply. Terraform POSTs `Initiated` before IAM creation and `Succeeded` after.
+No orchestrator or follow-up step is required.
+
+## Cleanup
+
+### Local Terraform
+
+```sh
+terraform destroy
+```
+
+### Schematics
+
+```sh
+ibmcloud schematics destroy --id <workspace_id> --force
+ibmcloud schematics workspace delete --id <workspace_id> --force
+```
+
+Or use the companion offboarding script
+(`ibm/single_account/ibm-connect-offboard.sh` in the parent repo), which
+drives both commands and notifies the Salt backend.
+
+Either cleanup path removes the Service ID, API key, access group, and
+policies.
 
 ## License
 

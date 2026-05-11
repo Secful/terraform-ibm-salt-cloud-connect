@@ -8,6 +8,10 @@ permissions:
   id-token: write
   contents: read
 
+# All third-party actions are pinned to immutable commit SHAs for
+# supply-chain hygiene. When bumping, find the new SHA via:
+#   gh api repos/<owner>/<repo>/git/refs/tags/<tag>
+
 jobs:
   bump_and_release:
     if: github.ref == 'refs/heads/master'
@@ -15,13 +19,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
       - name: Bump version
         id: bump
-        uses: anothrNick/github-tag-action@1.67.0
+        uses: anothrNick/github-tag-action@a2c70ae13a881faf2b4953baaa9e49731997ab36 # v1.67.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRERELEASE: false
@@ -30,7 +34,7 @@ jobs:
           FORCE_WITHOUT_CHANGES: true
 
       - name: Create release
-        uses: ncipollo/release-action@v1
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
         with:
           tag: ${{ steps.bump.outputs.new_tag }}
           name: ${{ steps.bump.outputs.new_tag }}

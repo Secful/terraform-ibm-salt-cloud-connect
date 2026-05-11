@@ -1,11 +1,6 @@
 output "stack_id" {
-  description = "Generated or user-provided stack ID used to namespace resources."
+  description = "Auto-generated stack ID used to namespace resources."
   value       = local.stack_id
-}
-
-output "service_id" {
-  description = "IBM IAM Service ID created for Salt Security. The API key bound to this Service ID is posted to the Salt backend and is NOT exposed as a Terraform output."
-  value       = ibm_iam_service_id.salt.id
 }
 
 output "account_id" {
@@ -13,7 +8,28 @@ output "account_id" {
   value       = data.ibm_iam_account_settings.current.account_id
 }
 
-output "deployment_status" {
-  description = "Terminal status of the Salt backend POST. 'succeeded' means credentials were accepted."
-  value       = trimspace(data.local_file.post_result.content)
+output "service_id" {
+  description = "IBM IAM Service ID (id form, e.g. ServiceId-xxx) created for Salt Security."
+  value       = ibm_iam_service_id.salt_service_id.id
+}
+
+output "service_id_iam_id" {
+  description = "IAM ID of the Service ID (iam-ServiceId-xxx form)."
+  value       = ibm_iam_service_id.salt_service_id.iam_id
+}
+
+output "api_key_id" {
+  description = "IBM IAM API key ID bound to the Service ID."
+  value       = ibm_iam_service_api_key.salt_api_key.id
+}
+
+output "api_key" {
+  description = "The Service ID API key. Sensitive: consume via `terraform output -raw api_key`; never log."
+  value       = ibm_iam_service_api_key.salt_api_key.apikey
+  sensitive   = true
+}
+
+output "access_group_id" {
+  description = "Access group containing the Service ID."
+  value       = ibm_iam_access_group.salt_access_group.id
 }
