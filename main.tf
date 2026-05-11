@@ -13,38 +13,17 @@ resource "random_id" "stack" {
 data "ibm_iam_account_settings" "current" {}
 
 # ============================================================================
-# Manual-deploy validation
+# POST "Initiated" before any IAM resources are created.
 #
-# When manual_deploy is false, an external orchestrator (the Cloud Shell
-# script) POSTs to the Salt backend. Leave the salt_* variables unset.
+# stack_id and account_id are known at plan time (random_id + data source), so
+# the backend sees a full identity on the very first POST — matches how the
+# Azure/GCP nonce-based scripts behave.
 #
-# When manual_deploy is true, Terraform POSTs from inside `apply` itself via
-# the null_resources below, so salt_host / salt_auth_token / attempt_id must
-# all be non-empty.
-# ============================================================================
-resource "null_resource" "manual_deploy_validation" {
-  count = var.manual_deploy ? 1 : 0
-
-  lifecycle {
-    precondition {
-      condition     = !var.manual_deploy || (var.salt_host != "" && var.salt_auth_token != "" && var.attempt_id != "")
-      error_message = "manual_deploy = true requires salt_host, salt_auth_token, and attempt_id to be set."
-    }
-  }
-}
-
-# ============================================================================
-# Manual-deploy: POST "Initiated" before any IAM resources are created.
-#
-# Runs first so the Salt backend acknowledges the attempt before any IAM is
-# created. post_status.sh exits non-zero on a non-2xx response, so if the
-# backend is unreachable the apply aborts before creating any resources —
-# preventing the worse outcome of IAM that Salt doesn't know about.
-# IAM resources depend on this null_resource to enforce ordering.
+# post_status.sh exits non-zero on a non-2xx response, so if the backend is
+# unreachable the apply aborts before creating any IAM — preventing the worse
+# outcome of resources Salt doesn't know about.
 # ============================================================================
 resource "null_resource" "post_initiated" {
-  count = var.manual_deploy ? 1 : 0
-
   triggers = {
     attempt_id = var.attempt_id
   }
@@ -56,11 +35,11 @@ resource "null_resource" "post_initiated" {
       SALT_AUTH_TOKEN   = var.salt_auth_token
       ATTEMPT_ID        = var.attempt_id
       INSTALLATION_ID   = var.installation_id
+      STACK_ID          = local.stack_id
+      ACCOUNT_ID        = data.ibm_iam_account_settings.current.account_id
       DEPLOYMENT_STATUS = "Initiated"
     }
   }
-
-  depends_on = [null_resource.manual_deploy_validation]
 }
 
 # ============================================================================
@@ -174,7 +153,7 @@ resource "ibm_iam_access_group_policy" "salt_account_management_policy" {
 }
 
 # ============================================================================
-# Manual-deploy: POST "Succeeded" after all IAM resources are ready.
+# POST "Succeeded" after all IAM resources are ready.
 #
 # Runs last (depends on every IAM resource) so the API key, access group, and
 # both policies are confirmed created before we tell Salt the onboarding is
@@ -182,8 +161,6 @@ resource "ibm_iam_access_group_policy" "salt_account_management_policy" {
 # via env vars and forwards them in connectionFields.
 # ============================================================================
 resource "null_resource" "post_succeeded" {
-  count = var.manual_deploy ? 1 : 0
-
   triggers = {
     api_key_id = ibm_iam_service_api_key.salt_api_key.id
   }

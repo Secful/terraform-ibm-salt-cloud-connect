@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #
 # Post a deployment status to the Salt Security Cloud Connect backend.
-# Invoked from null_resource.local-exec provisioners when manual_deploy=true.
+# Invoked from null_resource.local-exec provisioners in main.tf, once before
+# any IAM is created (Initiated) and once after the API key is issued
+# (Succeeded). Called for every apply — there is no opt-out.
 #
 # Required env vars:
 #   SALT_HOST          e.g. https://api.salt.security
