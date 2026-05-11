@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #
 # Post a deployment status to the Salt Security Cloud Connect backend.
-# Invoked from null_resource.local-exec provisioners when manual_deploy=true.
+# Invoked from null_resource.local-exec provisioners in main.tf, once before
+# any IAM is created (Initiated) and once after the API key is issued
+# (Succeeded). Called for every apply — there is no opt-out.
 #
 # Required env vars:
 #   SALT_HOST          e.g. https://api.salt.security
@@ -38,6 +40,11 @@ done
 RESP_FILE=$(mktemp -t salt-resp.XXXXXX)
 trap 'rm -f "$RESP_FILE"' EXIT
 
+# connectionFields must always be a populated object — the backend's
+# unified-scan validator returns 400 "ConnectionFields is required" if
+# the key is null or missing. On Initiated we don't have the api_key
+# yet, so we send an empty-string placeholder (same pattern the Azure
+# script uses for clientId/tenantId/clientSecret on its Initiated POST).
 payload=$(jq -n \
     --arg attemptId "$ATTEMPT_ID" \
     --arg stackId "${STACK_ID:-}" \
@@ -56,7 +63,7 @@ payload=$(jq -n \
         createdBy: $createdBy,
         deploymentStatus: $deploymentStatus,
         errorMessage: $errorMessage,
-        connectionFields: (if $apiKey != "" then {apiKey: $apiKey} else null end)
+        connectionFields: {apiKey: $apiKey}
     }')
 
 http_code=$(curl -s -o "$RESP_FILE" -w '%{http_code}' \

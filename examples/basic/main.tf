@@ -1,7 +1,3 @@
-# Minimal usage: the module takes no inputs. An external orchestrator
-# (e.g. ibm-connect-onboard.sh) reads the outputs and posts them to the
-# Salt backend.
-
 terraform {
   required_version = ">= 1.9.0"
 
@@ -17,13 +13,28 @@ provider "ibm" {
   # IC_API_KEY env var supplies credentials
 }
 
-module "salt_cloud_connect" {
-  source = "../.."
+variable "salt_host" {
+  description = "Salt backend URL (e.g. https://api.salt.security)"
+  type        = string
 }
 
-output "api_key" {
-  value     = module.salt_cloud_connect.api_key
-  sensitive = true
+variable "salt_auth_token" {
+  description = "Bearer token from the Salt dashboard"
+  type        = string
+  sensitive   = true
+}
+
+variable "attempt_id" {
+  description = "Onboarding attempt UUID from the Salt backend"
+  type        = string
+}
+
+module "salt_cloud_connect" {
+  source = "../.."
+
+  salt_host       = var.salt_host
+  salt_auth_token = var.salt_auth_token
+  attempt_id      = var.attempt_id
 }
 
 output "stack_id" {
